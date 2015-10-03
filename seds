@@ -1,0 +1,231 @@
+#!/bin/bash
+
+# Put this script where you want Space Engineers installed
+# Run 'chmod +x seds' if it is not already executable
+# Run 'seds install' to get started
+
+# Stop on errors
+set -e
+
+STEAMCMD_DL='https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip'
+
+SEDIR=$PWD
+SEDS=./`basename "$0"`
+
+NORMAL='\e[0m'
+BLACK='\e[30;2m'
+RED='\e[31;2m'
+GREEN='\e[32;2m'
+YELLOW='\e[33;2m'
+BLUE='\e[34;2m'
+MAGENTA='\e[35;2m'
+CYAN='\e[36;2m'
+WHITE='\e[37;2m'
+
+GREY='\e[30;1m'
+BRED='\e[31;1m'
+BGREEN='\e[32;1m'
+BYELLOW='\e[33;1m'
+BBLUE='\e[34;1m'
+BMAGENTA='\e[35;1m'
+BCYAN='\e[36;1m'
+BWHITE='\e[37;1m'
+
+
+function vercomp {
+    if [[ $1 == $2 ]]; then
+	echo '0'
+        return 0
+    fi
+    local IFS=.
+    local i ver1=($1) ver2=($2)
+    # fill empty fields in ver1 with zeros
+    for ((i=${#ver1[@]}; i<${#ver2[@]}; i++)); do
+        ver1[i]=0
+    done
+    for ((i=0; i<${#ver1[@]}; i++)); do
+        if [[ -z ${ver2[i]} ]]; then
+            # fill empty fields in ver2 with zeros
+            ver2[i]=0
+        fi
+        if ((10#${ver1[i]} < 10#${ver2[i]})); then
+		echo '-1'
+            return 0
+        fi
+        if ((10#${ver1[i]} > 10#${ver2[i]})); then
+		echo '1'
+		return 0
+        fi
+    done
+	echo '0'
+	return -1
+}
+
+
+case "$1" in
+	startx)
+		printf "Starting virtual X-server ... "
+		Xvfb -screen 0 1024x768x16 -ac &>xvfb.log &
+		echo $1 > xvfb.pid
+		sleep 1
+		DISPLAY=:0 ratpoison &>ratpoison.log &
+		echo $1 > ratpoison.pid
+		printf "${BGREEN}started!${NORMAL}\n"
+		echo "Create an SSH tunnel to forward port 5900 and launch x11vnc then connect to 'localhost' with a vncclient."
+		echo "If you are running Windows localy you can use Cygwin or PuTTY to create the tunnel."
+		echo "ssh -L 5900:localhost:5900 <user>@<server> 'x11vnc -localhost -display :0'"
+		;;
+
+	stopx)
+		printf "Stopping virtual X-server and VNC ... "
+		if [ -e xvfb.pid ]; then
+			kill `cat xvfb.pid`
+			rm -f xvfb.pid
+		fi
+		if [ -e ratpoison.pid ]; then
+			kill `cat ratpoison.pid`
+			rm -f ratpoison.pid
+		fi
+		printf "${BRED}stopped.${NORMAL}\n"
+		;;
+
+        start)
+		if [ -e se.pid ]; then
+                        echo "Space Engineers already running, pid `cat se.pid`"
+                else
+			printf "Starting Space Engineers Dedicated server ... "
+                        cd SpaceEngineers/DedicatedServer
+                        screen -S se -d -m wine SpaceEngineersDedicated.exe -console 2>/dev/null &
+                        sepid=$!
+                        cd - &>/dev/null
+                        echo ${sepid} > se.pid
+			printf "${BGREEN}started!${NORMAL}\n"
+                fi
+        	;;
+
+        gui)
+		if [ -e se.pid ]; then
+                        echo "Space Engineers already running, pid `cat se.pid`"
+                else
+			printf "Starting Space Engineers Dedicated server ... "
+                        cd SpaceEngineers/DedicatedServer
+                        DISPLAY=:0 wine SpaceEngineersDedicated.exe 2>/dev/null &
+                        sepid=$!
+			cd - &>/dev/null
+                        echo ${sepid} > se.pid
+			printf "${BGREEN}started!${NORMAL}\n"
+                fi
+        	;;
+
+	stop)
+		if [ -e se.pid ]; then
+			printf "Stopping server ... "
+			# Send a <ctrl>-C to attempt a clean shutdown
+			kill -SIGINT `cat se.pid`
+			sleep 5
+			# ... but the SE server waits for a key-press to exit for some God-forsaken reason so we have to kill it hard
+                        kill `cat se.pid`
+                        while kill -0 `cat se.pid` &>/dev/null; do
+                                sleep 0.5
+                        done
+                        rm -f se.pid
+			printf "${BRED}stopped.${NORMAL}\n"
+                else
+                        echo "No Space Engineers server running"
+                fi
+		;;
+
+	update)
+		STEAMUSER=`cat .steamuser 2>/dev/null || true`
+		if [ -z "${STEAMUSER}" ]; then
+			printf "Enter Steam username:\n"
+			read STEAMUSER
+			echo "${STEAMUSER}" > .steamuser
+			./Steamcmd/steamcmd.exe +login ${STEAMUSER} +quit
+		fi
+		mkdir -p SpaceEngineers
+		ln -sf $PWD/SpaceEngineers ~/.wine/drive_c/SpaceEngineers
+		mkdir -p ~/Worlds
+		ln -sf ~/Worlds ~/.wine/drive_c/users/`whoami`/Application\ Data\SpaceEngineersDedicated
+		./Steamcmd/steamcmd.exe +force_install_dir C:\\SpaceEngineers +login ${STEAMUSER} +app_update 244850 +quit 2>/dev/null
+		#Steamcmd doesn't seem to always shutdown NCURSES correctly; a reset fixes it but also clears the screen
+                #reset
+		;;
+
+	install_steam)
+		printf "${BWHITE}Downloading Steamcmd ... ${NORMAL}"
+		mkdir -p Steamcmd
+		cd Steamcmd
+		wget -O steamcmd.zip ${STEAMCMD_DL} &>/dev/null
+		printf "${BGREEN}done!${NORMAL}\n"
+		printf "${BWHITE}Unpacking ... ${NORMAL}"
+		unzip -u -o steamcmd.zip &>/dev/null
+		chmod +x steamcmd.exe
+		printf "${BGREEN}done!${NORMAL}\n"
+		printf "Updating Steam\n"
+		./steamcmd.exe +login anonymous +exit 2>/dev/null
+		cd - &>/dev/null
+		printf "${NORMAL}"
+		;;
+
+	install_wine)
+		printf "${BWHITE}Checking wine version ... "
+		wine_req="1.7.0"
+		wine_ver="`wine --version | awk -F- '{ printf $2 }'`"
+		if [ "-1" == "`vercomp ${wine_ver} ${wine_req}`" ]; then
+			printf "${BRED}v%s${NORMAL}\n" "${wine_ver}"
+			printf "${BWHITE} Installing WineHQ v1.7.x ...${NORMAL}"
+			sudo add-apt-repository -y ppa:ubuntu-wine/ppa
+			sudo apt-get update
+			sudo apt-get -y install wine winetricks
+		else
+			printf "${BGREEN}v%s${NORMAL}\n" "${wine_ver}"
+		fi
+		#
+                WINEARCH=win32 winecfg &> /dev/null
+                winetricks -q msxml3 &> /dev/null
+                winetricks -q dotnet40 &> /dev/null
+		;;
+
+	install_mono)
+		# Could try using Mono with Wine64
+		;;
+
+	install_hg)
+		sudo apt-get -y install mercurial
+		;;
+
+	install_xvfb)
+		sudo apt-get -y install Xvfb
+		sudo apt-get -y install ratpoison
+		sudo apt-get -y install x11vnc
+		;;
+
+	install)
+		${SEDS} install_xvfb
+		${SEDS} startx
+		${SEDS} install_wine
+		${SEDS} install_hg
+		${SEDS} install_steam
+		${SEDS} update
+		;;
+
+	#put an entry in your crontab pointing to this script with the first argument being 'backup <worldname>'.
+	backup)
+		./${SEDS} stop
+		# Using Mercurial for back-up because I think that will be easier for most people - especially if they want to clone the backups to their Windows PC
+		cd config/$1
+		hg add
+		hg commit -m"Backup"
+		cd - &>/dev/null
+		./${SEDS} start
+		;;
+
+	worlds)
+		ls -1 ./config/*/
+		;;
+
+        *)
+		printf "${BWHITE}seds ${NORMAL}[${BCYAN}install${NORMAL}|${BYELLOW}update${NORMAL}|${BGREEN}startx${NORMAL}|${BRED}stopx${NORMAL}|${BGREEN}start${NORMAL}|${BRED}stop${NORMAL}|${BMAGENTA}worlds${NORMAL}|${BMAGENTA}backup <world-name>${NORMAL}]${NORMAL}\n"
+		;;
+esac
