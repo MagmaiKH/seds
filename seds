@@ -2,7 +2,7 @@
 
 # Put this script where you want Space Engineers installed
 # Run 'chmod +x seds' if it is not already executable
-# Run 'seds install' to get started
+# Run './seds install' to get started
 
 # Stop on errors
 set -e
@@ -70,46 +70,50 @@ case "$1" in
 		sleep 1
 		DISPLAY=:0 ratpoison &>ratpoison.log &
 		echo $1 > ratpoison.pid
+		x11vnc --localhost --display :0 & &>x11vnc.out
 		printf "${BGREEN}started!${NORMAL}\n"
 		echo "Create an SSH tunnel to forward port 5900 and launch x11vnc then connect to 'localhost' with a vncclient."
 		echo "If you are running Windows localy you can use Cygwin or PuTTY to create the tunnel."
-		echo "ssh -L 5900:localhost:5900 <user>@<server> 'x11vnc -localhost -display :0'"
+		#echo "ssh -L 5900:localhost:5900 <user>@<server> 'x11vnc -localhost -display :0'"
+		echo "ssh -L 5900:localhost:5900 <user>@<server>"
 		;;
 
 	stopx)
 		printf "Stopping virtual X-server and VNC ... "
-		if [ -e xvfb.pid ]; then
-			kill `cat xvfb.pid`
-			rm -f xvfb.pid
-		fi
 		if [ -e ratpoison.pid ]; then
 			kill `cat ratpoison.pid`
 			rm -f ratpoison.pid
+		fi
+		if [ -e xvfb.pid ]; then
+			kill `cat xvfb.pid`
+			rm -f xvfb.pid
 		fi
 		printf "${BRED}stopped.${NORMAL}\n"
 		;;
 
         start)
 		if [ -e se.pid ]; then
-                        echo "Space Engineers already running, pid `cat se.pid`"
+                        echo "Space Engineers already running, pid `cat se.pid`" && false
                 else
 			printf "Starting Space Engineers Dedicated server ... "
                         cd SpaceEngineers/DedicatedServer
-                        screen -S se -d -m wine SpaceEngineersDedicated.exe -console 2>/dev/null &
+                        screen -S se -d -m wine SpaceEngineersDedicated.exe -console &
                         sepid=$!
                         cd - &>/dev/null
                         echo ${sepid} > se.pid
 			printf "${BGREEN}started!${NORMAL}\n"
+			printf "Run 'screen -x' to connect to screen running SEDS\n"
+			printf "<ctrl>-A,D will detach from the screen\n"
                 fi
         	;;
 
         gui)
 		if [ -e se.pid ]; then
-                        echo "Space Engineers already running, pid `cat se.pid`"
+                        echo "Space Engineers already running, pid `cat se.pid`" && false
                 else
 			printf "Starting Space Engineers Dedicated server ... "
                         cd SpaceEngineers/DedicatedServer
-                        DISPLAY=:0 wine SpaceEngineersDedicated.exe 2>/dev/null &
+                        DISPLAY=:0 wine SpaceEngineersDedicated.exe 1>se.out 2>se.err &
                         sepid=$!
 			cd - &>/dev/null
                         echo ${sepid} > se.pid
@@ -117,21 +121,28 @@ case "$1" in
                 fi
         	;;
 
+	toolbox)
+		DISPLAY=:0 wine ~/.wine/drive_c/SEToolbox/SEToolbox.exe& 2>/dev/null
+		;;
+
 	stop)
 		if [ -e se.pid ]; then
 			printf "Stopping server ... "
 			# Send a <ctrl>-C to attempt a clean shutdown
-			kill -SIGINT `cat se.pid`
+			sepid=`cat se.pid`
+			echo ${sepid}
+			rm -f se.pid
+			kill -SIGINT ${sepid} &>/dev/null ||true
 			sleep 5
 			# ... but the SE server waits for a key-press to exit for some God-forsaken reason so we have to kill it hard
-                        kill `cat se.pid`
-                        while kill -0 `cat se.pid` &>/dev/null; do
+                        kill ${sepid} &>/dev/null || true
+                        while kill -0 ${sepid} &>/dev/null; do
                                 sleep 0.5
                         done
-                        rm -f se.pid
+			killall SpaceEngineersDedicated.exe &>/dev/null
 			printf "${BRED}stopped.${NORMAL}\n"
                 else
-                        echo "No Space Engineers server running"
+                        echo "No Space Engineers server running" && false
                 fi
 		;;
 
@@ -212,20 +223,49 @@ case "$1" in
 
 	#put an entry in your crontab pointing to this script with the first argument being 'backup <worldname>'.
 	backup)
-		./${SEDS} stop
 		# Using Mercurial for back-up because I think that will be easier for most people - especially if they want to clone the backups to their Windows PC
-		cd config/$1
-		hg add
-		hg commit -m"Backup"
-		cd - &>/dev/null
-		./${SEDS} start
+		SAVE="$HOME/Worlds/Saves/$2"
+		if [ -z $2 ]; then
+			printf "Usage: ./seds backup <world>\n"
+			printf "Run './seds worlds' to see list of Space Engineers worlds\n" && false
+		else
+			if [ -d "${SAVE}" ]; then
+				if [ ! -d "${SAVE}/.hg" ]; then
+					hg init ${SAVE}
+				fi
+				hg status -R ${SAVE}
+				hg add -R ${SAVE}
+				hg commit -m"Backup" -R ${SAVE}
+				hg status -R ${SAVE}
+			else
+				printf "World ${BYELLOW}%s${NORMAL} not found at ${BYELLOW}%s${NORMAL}.\n" "$2" "${SAVE}" && false
+			fi
+		fi
 		;;
 
 	worlds)
-		ls -1 ./config/*/
+		ls -1d ~/Worlds/Saves/*/ | sed -e "s:${HOME}/Worlds/Saves/::" | awk -F/ '{ printf $1 "\n" }'
+		;;
+
+	revert)
+		SAVE="$HOME/Worlds/Saves/$2"
+		if [ -d "${SAVE}" ]; then
+			if [ -d "${SAVE}/.hg" ]; then
+				SAVE="$HOME/Worlds/Saves/$2"
+				hgdate=`hg log -l 1 -R ${SAVE}|awk '/date/ { print $0 }'|sed 's/date:\ \+//'`
+				printf "This will undo all changes back to ${BYELLOW}%s${NORMAL} and ${BMAGENTA}CANNOT be undone${NORMAL} !\n" "${hgdate}"
+				printf "Are you ${BYELLOW}SURE${NORMAL}?\n${BRED}<ctrl>-C${NORMAL} to abort, ${BGREEN}<enter>${NORMAL} to continue\n"
+				read
+				hg revert --all -R ${SAVE}
+			else
+				printf "No backup found at ${BYELLOW}%s${NORMAL} !\n" "${SAVE}" && false
+			fi
+		else
+			printf "World ${BYELLOW}%s${NORMAL} not found at ${BYELLOW}%s${NORMAL}.\n" "$2" "${SAVE}" && false
+		fi
 		;;
 
         *)
-		printf "${BWHITE}seds ${NORMAL}[${BCYAN}install${NORMAL}|${BYELLOW}update${NORMAL}|${BGREEN}startx${NORMAL}|${BRED}stopx${NORMAL}|${BGREEN}start${NORMAL}|${BRED}stop${NORMAL}|${BMAGENTA}worlds${NORMAL}|${BMAGENTA}backup <world-name>${NORMAL}]${NORMAL}\n"
+		printf "${BWHITE}./seds ${NORMAL}[${BCYAN}install${NORMAL}|${BYELLOW}update${NORMAL}|${BGREEN}startx${NORMAL}|${BRED}stopx${NORMAL}|${BGREEN}gui${NORMAL}|${BGREEN}start${NORMAL}|${BRED}stop${NORMAL}|${BMAGENTA}toolbox${NORMAL}|${BMAGENTA}worlds${NORMAL}|${BMAGENTA}backup <world-name>${NORMAL}]${NORMAL}\n" && false
 		;;
 esac
