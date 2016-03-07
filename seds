@@ -186,7 +186,7 @@ case "$1" in
 	install_wine)
 		sudo dpkg --add-architecture i386
 		sudo apt-get update
-		sudo apt-get -y install wine winetricks zenity wine-gecko2.40
+		sudo apt-get -y install wine winetricks zenity wine-gecko
 		export DISPLAY=0:0
                 WINEARCH=win32 wine wineboot &> /dev/null
                 winetricks msxml3 &> /dev/null
