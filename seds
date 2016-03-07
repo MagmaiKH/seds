@@ -97,7 +97,7 @@ case "$1" in
                 else
 			printf "Starting Space Engineers Dedicated server ... "
                         cd SpaceEngineers/DedicatedServer
-                        screen -S se -d -m wine SpaceEngineersDedicated.exe -console &
+                        screen -S se -d -m wine SpaceEngineersDedicated.exe -console 2>/dev/null &
                         sepid=$!
                         cd - &>/dev/null
                         echo ${sepid} > se.pid
@@ -155,12 +155,16 @@ case "$1" in
 			./Steamcmd/steamcmd.exe +login ${STEAMUSER} +quit
 		fi
 		mkdir -p SpaceEngineers
-		ln -sf $PWD/SpaceEngineers ~/.wine/drive_c/SpaceEngineers
-		mkdir -p ~/Worlds
-		ln -sf ~/Worlds ~/.wine/drive_c/users/`whoami`/Application\ Data\SpaceEngineersDedicated
+		ln -sf ${PWD}/SpaceEngineers ~/.wine/drive_c/SpaceEngineers
+		mkdir -p ~/.wine/drive_c/users/`whoami`/Application\ Data/SpaceEngineersDedicated/Saves
+		ln -sf ~/.wine/drive_c/users/`whoami`/Application\ Data/SpaceEngineersDedicated Worlds
 		./Steamcmd/steamcmd.exe +force_install_dir C:\\SpaceEngineers +login ${STEAMUSER} +app_update 244850 +quit 2>/dev/null
 		#Steamcmd doesn't seem to always shutdown NCURSES correctly; a reset fixes it but also clears the screen
                 #reset
+		;;
+
+	login)
+		./Steamcmd/steamcmd.exe +login 2>/dev/null
 		;;
 
 	install_steam)
@@ -180,26 +184,28 @@ case "$1" in
 		;;
 
 	install_wine)
-		printf "${BWHITE}Checking wine version ... "
-		wine_req="1.7.0"
-		wine_ver="`wine --version | awk -F- '{ printf $2 }'`"
-		if [ "-1" == "`vercomp ${wine_ver} ${wine_req}`" ]; then
-			printf "${BRED}v%s${NORMAL}\n" "${wine_ver}"
-			printf "${BWHITE} Installing WineHQ v1.7.x ...${NORMAL}"
-			sudo add-apt-repository -y ppa:ubuntu-wine/ppa
-			sudo apt-get update
-			sudo apt-get -y install wine winetricks
-		else
-			printf "${BGREEN}v%s${NORMAL}\n" "${wine_ver}"
-		fi
-		#
-                WINEARCH=win32 winecfg &> /dev/null
-                winetricks -q msxml3 &> /dev/null
-                winetricks -q dotnet40 &> /dev/null
+		sudo dpkg --add-architecture i386
+		sudo apt-get update
+		sudo apt-get -y install wine winetricks zenity wine-gecko2.40
+		export DISPLAY=0:0
+                WINEARCH=win32 wine wineboot &> /dev/null
+                winetricks msxml3 &> /dev/null
+                winetricks dotnet40 &> /dev/null
+                winetricks gdiplus &> /dev/null
+		;;
+
+	local_wine)
+		rm -rf ~/.wine
+		export DISPLAY=0:0
+                WINEARCH=win32 wine wineboot &> /dev/null
+                winetricks msxml3 &> /dev/null
+                winetricks dotnet40 &> /dev/null
+                winetricks gdiplus &> /dev/null
 		;;
 
 	install_mono)
 		# Could try using Mono with Wine64
+		#sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 3FA7E0328081BFF6A14DA29AA6A19B38D3D831EF
 		;;
 
 	install_hg)
@@ -210,6 +216,7 @@ case "$1" in
 		sudo apt-get -y install Xvfb
 		sudo apt-get -y install ratpoison
 		sudo apt-get -y install x11vnc
+		sudo apt-get -y install x11-apps
 		;;
 
 	install)
@@ -219,12 +226,13 @@ case "$1" in
 		${SEDS} install_hg
 		${SEDS} install_steam
 		${SEDS} update
+		sudo apt-get -y install screen
 		;;
 
 	#put an entry in your crontab pointing to this script with the first argument being 'backup <worldname>'.
 	backup)
 		# Using Mercurial for back-up because I think that will be easier for most people - especially if they want to clone the backups to their Windows PC
-		SAVE="$HOME/Worlds/Saves/$2"
+		SAVE="./Worlds/Saves/$2"
 		if [ -z $2 ]; then
 			printf "Usage: ./seds backup <world>\n"
 			printf "Run './seds worlds' to see list of Space Engineers worlds\n" && false
@@ -244,14 +252,13 @@ case "$1" in
 		;;
 
 	worlds)
-		ls -1d ~/Worlds/Saves/*/ | sed -e "s:${HOME}/Worlds/Saves/::" | awk -F/ '{ printf $1 "\n" }'
+		ls -1d ./Worlds/Saves/*/ | sed -e "s:./Worlds/Saves/::" | awk -F/ '{ printf $1 "\n" }'
 		;;
 
 	revert)
-		SAVE="$HOME/Worlds/Saves/$2"
+		SAVE="./Worlds/Saves/$2"
 		if [ -d "${SAVE}" ]; then
 			if [ -d "${SAVE}/.hg" ]; then
-				SAVE="$HOME/Worlds/Saves/$2"
 				hgdate=`hg log -l 1 -R ${SAVE}|awk '/date/ { print $0 }'|sed 's/date:\ \+//'`
 				printf "This will undo all changes back to ${BYELLOW}%s${NORMAL} and ${BMAGENTA}CANNOT be undone${NORMAL} !\n" "${hgdate}"
 				printf "Are you ${BYELLOW}SURE${NORMAL}?\n${BRED}<ctrl>-C${NORMAL} to abort, ${BGREEN}<enter>${NORMAL} to continue\n"
